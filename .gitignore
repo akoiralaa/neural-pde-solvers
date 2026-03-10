@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+*.egg-info/
+dist/
+build/
+*.pt
+*.pth
+wandb/
+outputs/
+stage2/mc_rainbow
