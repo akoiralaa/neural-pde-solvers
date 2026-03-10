@@ -1,5 +1,4 @@
-# Neural PDE Solvers — Research Project
-
+# Neural PDE Solvers  
 **Author:** Abhie Koirala  
 **Started:** February 18, 2026  
 **Hardware:** MacBook, iPhone
