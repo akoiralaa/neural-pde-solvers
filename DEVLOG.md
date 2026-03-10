@@ -110,6 +110,49 @@ The residual connection was the key insight. Without it, the 256-hidden nets sti
 
 ---
 
+## Stage 3 — Heston DeepONet
+
+### Heston FD solver — explicit scheme NaN blowup (again)
+
+First attempt used explicit Euler on the (S, v) grid. Same failure as Stage 2: the 0.5·v·S² coefficient in the diffusion term grows without bound in the upper-right corner of the grid. CFL violated, NaN within a few timesteps.
+
+**Fix:** Two changes. (1) Log-spot transform x = ln(S) removes the S² growth — all coefficients in the transformed PDE are bounded. (2) Fully implicit time-stepping. Built the sparse matrix once (interior coefficients are time-independent), update only the boundary RHS each step. Went from 29s to 11s per solve.
+
+**Result:** ATM price 10.3665 vs semi-analytical 10.3140, error 0.51%. Good enough for validation. Used the char fn (12ms, more accurate) for data generation instead.
+
+---
+
+### Data generation — 57% failure rate on first attempt
+
+First parameter sampling used wide ranges (σ up to 0.8, no Feller filter). 867/1000 failed — the characteristic function produces negative prices or the IV inversion fails for extreme parameters.
+
+**Root cause:** Two issues. (1) High vol-of-vol (σ > 0.6) combined with low mean reversion makes the char fn numerically unstable — the complex exponentials overflow. (2) Deep OTM options at short maturities have prices near zero, making IV inversion degenerate.
+
+**Fix:** Tightened ranges (σ ≤ 0.6, θ ≤ 0.10) and added soft Feller filter (2κθ > 0.5σ²). Also vectorized the char fn with numpy — 50x speedup over the cmath loop version. Generated 2000 candidates to get 874 valid surfaces in 40 seconds.
+
+---
+
+### numpy 2.x breaking change — np.trapz removed
+
+`np.trapz` was removed in NumPy 2.x (Python 3.14 ships with a recent numpy). Silent `AttributeError` that looked like a deeper bug until isolated.
+
+**Fix:** Replace with `np.trapezoid`.
+
+---
+
+### DeepONet — worked first try
+
+Surprising. The branch/trunk architecture with 256-hidden, 128-latent, 3 layers each converged to 0.38% mean relative error on 175 test surfaces in 54 seconds. No tuning needed beyond standard Adam + cosine annealing.
+
+The key design decisions that probably helped:
+1. Input normalization (standardize both branch and trunk inputs)
+2. Predicting implied vol instead of price — vol surfaces are smoother and more bounded than price surfaces
+3. Latent dimension 128 gives enough capacity for the 5→surface mapping
+
+**Failure mode confirmed:** 4/175 test surfaces exceeded 1% error, all near the Feller boundary (2κθ/σ² ≈ 1) or with weak leverage (ρ near -0.2). The README predicted "the network will fail on extreme regimes" — this is exactly what happened.
+
+---
+
 ## Infrastructure
 
 ### matplotlib savefig path error

@@ -158,13 +158,14 @@ Since the PDE F(u) = 0 is known exactly, the network's prediction can be plugged
 - [x] Error analysis: ITM vs OTM breakdown, boundary vs interior comparison
 
 ### Stage 3 — To Build
-- [ ] Heston FD solver from scratch (Python, ADI/Crank-Nicolson)
-- [ ] Parameter sampling distribution for Heston space (κ, θ, σ, ρ, v₀)
-- [ ] Training data generator: 1,000 parameter sets → 1,000 vol surfaces via FD
-- [ ] DeepONet architecture (PyTorch): branch network + trunk network
-- [ ] Training pipeline, 800/200 train/test split
-- [ ] ARE computation across test set
-- [ ] Regime analysis: does error spike at high-vol corner of parameter space?
+- [x] Heston FD solver from scratch (Python, implicit in log-spot coordinates)
+- [x] Semi-analytical Heston pricer (characteristic function, Gil-Pelaez inversion)
+- [x] Parameter sampling distribution for Heston space (κ, θ, σ, ρ, v₀)
+- [x] Training data generator: 874 valid surfaces via char fn
+- [x] DeepONet architecture (PyTorch): branch network + trunk network
+- [x] Training pipeline, 699/175 train/test split
+- [x] Error analysis across test set
+- [x] Regime analysis: error vs Feller condition and parameter extremes
 
 ### Infrastructure
 - [x] Set up Python environment (PyTorch, DeepXDE, NumPy, SciPy, Matplotlib)
@@ -304,14 +305,63 @@ All dimensions under the 0.5% target. The Deep BSDE method scales from 2 to 100 
 
 ---
 
+## Stage 3 — Results
+
+### Ground Truth Validation: FD vs Semi-Analytical
+
+| Method | Price (ATM, Heston benchmark) | Time |
+|---|---|---|
+| Semi-analytical (char fn) | 10.3140 | 12ms |
+| FD (implicit, log-spot) | 10.3665 | 11s |
+| Error | 0.51% | — |
+
+The FD solver validates the characteristic function implementation. For data generation, the char fn is used — 50x faster and more accurate.
+
+### DeepONet: Learning Heston Parameter → Vol Surface Mapping
+
+874 valid Heston parameter sets generated (soft Feller condition filter). Each produces an implied vol surface on an 11×7 grid (moneyness × maturity). Split: 699 train, 175 test.
+
+**Architecture:** Branch network (5→256→256→256→128) encodes Heston params. Trunk network (2→256→256→256→128) encodes query point (moneyness, T). Output = dot product of branch and trunk + bias.
+
+| Metric | Value |
+|---|---|
+| Mean relative error | **0.38%** |
+| MAE | 0.0010 |
+| Max absolute error | 0.0185 |
+| Surfaces under 1% | 171/175 (97.7%) |
+| Train time | 54s |
+| Target | <1% mean relative error |
+
+**PASS.** The DeepONet learns the mapping from Heston parameters to entire implied vol surfaces without retraining — a single forward pass replaces solving the PDE.
+
+**Training loss, predicted vs true, and per-surface error:**
+
+![DeepONet Results](stage3/deeponet_results.png)
+
+### Predicted Failure Mode: Extreme Parameter Regimes
+
+The 4 surfaces that exceed 1% error share a pattern: low Feller ratio (2κθ/σ² near or below 1.0) or weak leverage effect (ρ near -0.2). These are the corners of parameter space where the vol surface shape changes qualitatively — variance can touch zero, creating a degenerate diffusion.
+
+The worst surface (1.89% error) has σ=0.54, Feller ratio 0.53. This is exactly the failure mode predicted in the roadmap: "If parameters are sampled uniformly, the network will fail on extreme regimes."
+
+**Error vs Heston parameters and Feller condition:**
+
+![Regime Analysis](stage3/regime_analysis.png)
+
+**Heston FD price surface V(S, v):**
+
+![Heston FD Surface](stage3/heston_fd_surface.png)
+
+---
+
 ## Project Status
 
 | Item | Status |
 |---|---|
 | Stage 1: Hard Constraints | Done |
 | Stage 2: High-D Pricing | Done |
-| Stage 3: Neural Operator | Not started |
-| Prerequisites (reading) | In progress |
+| Stage 3: Neural Operator | Done |
+| Prerequisites (reading) | Done |
 | Infrastructure setup | Done |
 
 ---
