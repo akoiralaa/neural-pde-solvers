@@ -140,6 +140,30 @@ The residual connection was the key insight. Without it, the 256-hidden nets sti
 
 ---
 
+### Deep Ritz method for Koch eigenfunctions — negative result
+
+Tried the variational (Deep Ritz) approach as an alternative to the PINN residual method for Laplace eigenfunctions. The idea: minimize the Rayleigh quotient R(u) = ∫|∇u|²/∫u² instead of the PDE residual ∇²u + λu = 0. Only needs first derivatives (no Laplacian), which should be simpler for autograd.
+
+Six formulations were tried, all failed:
+
+1. **Hard BC + Rayleigh quotient:** u = d(x)·NN(x). When NN→0, both numerator and denominator →0, giving R→0/0=0. The trivial solution u=0 is a global minimum. Adding normalization penalties didn't help — the network found u≈0 faster than the penalty could push it away.
+
+2. **Soft BC + Rayleigh quotient:** NaN on MPS float32. The quotient division is unstable when ∫u² is small.
+
+3. **Soft BC + energy constraint (no division):** Still NaN. High boundary penalty (500) + gradient clipping insufficient.
+
+4. **CPU float64 + SimpleMLP:** No NaN but u collapsed to tiny values. The energy term drives u→0 faster than normalization can prevent.
+
+5. **Explicit normalization + soft BC:** u normalized to ||u||²=0.5 before computing ∫|∇u|². Trained stably but λ≈1.49 for circle (should be 5.78). A constant function has R=0 with any normalization; the soft boundary penalty was too weak to prevent it.
+
+6. **Hard BC + energy form + learnable λ:** Loss = (∫|∇u|² - λ∫u²)². The network adjusts u to make the energy zero for ANY fixed λ. This is a saddle point problem (should min over u, max over λ), but joint minimization of E² lets both cooperate to find E=0 trivially.
+
+**Key finding from the comparison runs:** The PINN baseline with fixed collocation points (no adaptive resampling/replacement) trained completely stably — zero oscillation spikes. This confirms the training instability in the original Koch PINN is caused by collocation point replacement, not by the PINN method or the fractal boundary.
+
+**Takeaway:** The Deep Ritz / Rayleigh quotient approach has fundamental difficulties for eigenvalue problems: the variational formulation requires solving a saddle point problem (min-max), not a simple minimization. PINNs work better because they minimize a well-defined residual with no quotient or saddle point structure.
+
+---
+
 ## Stage 3 — Heston DeepONet
 
 ### Heston FD solver — explicit scheme NaN blowup (again)
