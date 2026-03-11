@@ -171,7 +171,7 @@ Since the PDE F(u) = 0 is known exactly, the network's prediction can be plugged
 
 ### Infrastructure
 - [x] Set up Python environment (PyTorch, DeepXDE, NumPy, SciPy, Matplotlib)
-- [ ] Set up experiment logging (loss curves, error metrics per run)
+- [x] Set up experiment logging (loss curves, error metrics per run)
 
 ---
 
@@ -240,7 +240,13 @@ Then applied to domains where FEM mesh generation is painful or impossible:
 
 ![Eigenfunctions](stage1/eigenfunction_results.png)
 
-**Adaptive multi-scale resampling** addresses the fractal boundary resolution problem: after initial training, compute the a posteriori residual |∇²u + λu| at each point, then resample collocation points weighted by residual — concentrating points where the solution is worst (near fractal inlets). 4 phases of adaptive resampling reduce mean residual **2x** compared to uniform sampling.
+**Importance-weighted collocation** addresses the fractal boundary resolution problem. The naive approach — replacing collocation points with new ones in high-error regions — causes massive training instability (loss spikes of 10,000-38,000x) due to sudden distribution shift. Instead, all collocation points are fixed for the entire training, and per-point weights in the loss function are updated periodically based on the PDE residual. High-error points (near fractal inlets) count more; low-error points count less. No distribution shift, no spikes.
+
+| Method | Training spikes | Final physics loss |
+|--------|----------------|-------------------|
+| Uniform (fixed, no adaptation) | 0 | 0.0024 |
+| Point-swap adaptive (old) | 5 major (up to 38,515x) | 0.50 |
+| Importance-weighted (fixed, adaptive weights) | 0 | 0.015 |
 
 ![Multi-scale Koch](stage1/multiscale_koch.png)
 
@@ -310,6 +316,10 @@ Initial BSDE scaling test (64-hidden subnets) failed at 50 and 100 assets — er
 | 100 | 79.4396 | 79.4686 | 0.04% | PASS |
 
 All dimensions under the 0.5% target. The Deep BSDE method scales from 2 to 100 assets without hitting the curse of dimensionality.
+
+**Scaling results — training loss, error vs dimension, Y0 convergence:**
+
+![BSDE Scaling](stage2/bsde_scaling_fixed.png)
 
 **MC convergence and payoff distribution (5-asset):**
 

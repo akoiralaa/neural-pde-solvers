@@ -182,7 +182,9 @@ The Koch PINN training spikes (loss jumping 10,000-38,000x) were caused by collo
 
 **Tradeoff:** Uniform baseline has slightly lower final loss (0.0024 vs 0.015) but finds a lower eigenvalue (17.93 vs 19.87). The importance-weighted method explores more of the eigenfunction space because boundary-adjacent points get upweighted. The point-swap method finds the highest λ (20.51) but is unreliable — its "best" model is from a snapshot between instability spikes.
 
-**Residual accuracy:** All three methods produce similar mean residuals on held-out evaluation points (18-23), suggesting the eigenfunction quality is comparable. The main win is training stability — importance weighting gives reliable, predictable convergence without babysitting.
+**Residual accuracy:** All three methods produce similar mean residuals on held-out evaluation points (17-31), suggesting the eigenfunction quality is comparable. The main win is training stability — importance weighting gives reliable, predictable convergence without babysitting.
+
+**Spike metric bug:** Initial spike count used "physics loss > 10x median post-warmup" which was too sensitive — counted normal early-training values as spikes (e.g. 1531 "spikes" for uniform baseline which was completely smooth). Fixed to count catastrophic spikes (loss > 100 in second half of training): uniform 0, point-swap 3, importance-weighted 0. The old PNG with wrong spike counts was `multiscale_koch.png` before the fix.
 
 ---
 
@@ -240,3 +242,7 @@ The PINN script ran from `stage1/` but savefig paths were `stage1/pinn_compariso
 ### Python 3.14 + PyTorch compatibility
 
 Running Python 3.14.2 (bleeding edge). PyTorch 2.10.0 installed cleanly via pip on Apple Silicon (MPS backend). No compatibility issues hit so far, but worth noting since 3.14 is not yet widely tested.
+
+### Stale PNGs
+
+`stage2/bsde_scaling.png` — shows pre-fix results (2-asset 5.35%, 50-asset 4.73%) from before the correlation mismatch and residual connection fixes. Kept in repo as documentation of the failure. The corrected version is `bsde_scaling_fixed.png` (all dimensions under 0.5%).

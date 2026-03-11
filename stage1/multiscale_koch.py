@@ -3,6 +3,10 @@
 # resample collocation points where residual is highest, retrain
 # repeat at each fractal refinement level
 
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
 import torch
 import torch.nn as nn
 import numpy as np
@@ -12,6 +16,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.tri as mtri
 import time
+from experiment_log import ExperimentLog
 
 DEVICE = torch.device('mps' if torch.backends.mps.is_available() else 'cpu')
 
@@ -450,14 +455,12 @@ def plot_three_way(models, lams, histories, labels, verts, outpath):
     ax6.set_title('Training Stability')
     ax6.legend(); ax6.grid(True, alpha=0.3)
 
-    # count spikes for each method (skip first 20% warmup)
+    # count catastrophic spikes: loss > 100 in second half of training
     spike_counts = []
     for hist, label in zip(histories, labels):
         phys = np.array(hist['phys'])
-        warmup = len(phys) // 5
-        phys_post = phys[warmup:]
-        median = np.median(phys_post)
-        spikes = np.sum(phys_post > 10 * median)
+        half = len(phys) // 2
+        spikes = int(np.sum(phys[half:] > 100.0))
         spike_counts.append(spikes)
 
     # stats text
@@ -524,29 +527,51 @@ if __name__ == '__main__':
     print('\n--- Residual comparison ---')
     xy_eval = sample_interior(verts, 10000, np.random.default_rng(99))
     d_eval = dist_to_boundary(xy_eval, verts)
-    for name, mdl, lam_val in [('Uniform', model_uniform, lam_uniform),
-                                ('Point-swap', model_swap, lam_swap),
-                                ('Importance-weighted', model_iw, lam_iw)]:
+
+    # experiment logging
+    log = ExperimentLog("stage1/multiscale_koch",
+                        log_dir=os.path.join(os.path.dirname(__file__), '..', 'logs'))
+    log.config({"epochs": N_EPOCHS, "n_pts": 8000, "n_boundary": 3000,
+                "koch_level": 4, "device": str(DEVICE)})
+
+    for name, mdl, lam_val, hist in [
+        ('Uniform', model_uniform, lam_uniform, hist_uniform),
+        ('Point-swap', model_swap, lam_swap, hist_swap),
+        ('Importance-weighted', model_iw, lam_iw, hist_iw)
+    ]:
         res_vals = compute_residual(mdl, xy_eval, d_eval, verts)
         print(f'  {name:20s}: λ = {lam_val:.4f}, mean |∇²u + λu| = {res_vals.mean():.4f}')
+        log.metric(f"{name}/lambda", round(lam_val, 4))
+        log.metric(f"{name}/mean_residual", round(float(res_vals.mean()), 4))
 
-    # spike counts (skip first 20% warmup)
+    # count catastrophic spikes: loss > 100 in second half of training
     for name, hist in [('Uniform', hist_uniform), ('Point-swap', hist_swap),
                        ('Importance-weighted', hist_iw)]:
         phys = np.array(hist['phys'])
-        warmup = len(phys) // 5
-        phys_post = phys[warmup:]
-        median = np.median(phys_post)
-        spikes = np.sum(phys_post > 10 * median)
-        print(f'  {name:20s}: {spikes} spikes (>10x median, post-warmup)')
+        half = len(phys) // 2
+        spikes = int(np.sum(phys[half:] > 100.0))
+        print(f'  {name:20s}: {spikes} catastrophic spikes (loss>100, 2nd half)')
+        log.metric(f"{name}/catastrophic_spikes", spikes)
+
+    # save loss curves to log
+    for name, hist in [('Uniform', hist_uniform), ('Point-swap', hist_swap),
+                       ('Importance-weighted', hist_iw)]:
+        # subsample to keep log file reasonable (~200 points per curve)
+        phys = hist['phys']
+        step = max(1, len(phys) // 200)
+        log.step({f"{name}/phys_loss": [round(p, 6) for p in phys[::step]],
+                  f"{name}/lambda": [round(l, 4) for l in hist['lam'][::step]]})
+
+    log.metric("total_time_seconds", round(elapsed, 1))
+    log.save()
 
     # plot
-    outdir = '/Users/abhiekoirala/Desktop/neural-pde-solvers/stage1'
+    outdir = os.path.dirname(__file__)
     plot_three_way(
         models=[model_uniform, model_swap, model_iw],
         lams=[lam_uniform, lam_swap, lam_iw],
         histories=[hist_uniform, hist_swap, hist_iw],
         labels=['Uniform', 'Point-swap', 'Importance-weighted'],
         verts=verts,
-        outpath=f'{outdir}/multiscale_koch.png'
+        outpath=os.path.join(outdir, 'multiscale_koch.png')
     )
