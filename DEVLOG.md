@@ -164,6 +164,28 @@ Six formulations were tried, all failed:
 
 ---
 
+### Importance-weighted collocation — fixing Koch training instability
+
+The Koch PINN training spikes (loss jumping 10,000-38,000x) were caused by collocation point replacement in the adaptive resampling scheme. Every ~2000 epochs, the old code threw out training points and replaced them with new ones concentrated in high-error regions. This is a sudden distribution shift that the optimizer can't handle.
+
+**Three-way comparison (10k epochs each):**
+
+| Method | Training spikes | Final physics loss | λ |
+|--------|----------------|-------------------|-----|
+| Uniform (fixed points, no adaptation) | 0 | 0.0024 | 17.93 |
+| Point-swap adaptive (old method) | 5 major (up to 38515x) | 0.50 | 20.51 |
+| Importance-weighted (fixed points, adaptive weights) | 0 | 0.015 | 19.87 |
+
+**How importance weighting works:** Keep all collocation points fixed for the entire training. Periodically compute the PDE residual at each point, then assign a per-point weight in the loss function proportional to its residual magnitude. High-error points count more, low-error points count less. The weights are clamped to [0.1, 10.0] to prevent any single point from dominating.
+
+**Key insight:** The weights change smoothly (via softmax + clamping), so there's no distribution shift. The optimizer sees the same points throughout — just with gradually changing importance. No spikes at reweighting boundaries.
+
+**Tradeoff:** Uniform baseline has slightly lower final loss (0.0024 vs 0.015) but finds a lower eigenvalue (17.93 vs 19.87). The importance-weighted method explores more of the eigenfunction space because boundary-adjacent points get upweighted. The point-swap method finds the highest λ (20.51) but is unreliable — its "best" model is from a snapshot between instability spikes.
+
+**Residual accuracy:** All three methods produce similar mean residuals on held-out evaluation points (18-23), suggesting the eigenfunction quality is comparable. The main win is training stability — importance weighting gives reliable, predictable convergence without babysitting.
+
+---
+
 ## Stage 3 — Heston DeepONet
 
 ### Heston FD solver — explicit scheme NaN blowup (again)
