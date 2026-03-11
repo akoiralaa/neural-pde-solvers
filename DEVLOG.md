@@ -30,6 +30,24 @@ Increasing the BC weight from 10 to 100 pushes the boundary error lower but hurt
 
 ---
 
+### Laplace eigenfunctions on fractal domains — Koch snowflake training instability
+
+Extended Stage 1 to solve ∇²u = -λu on complex 2D domains (Koch snowflake, five-pointed star). The eigenvalue λ is a free parameter learned during training (same idea as Y0 in the BSDE).
+
+**Circle validation:** λ = 5.787 vs exact 5.783 (0.06% error). Confirms the architecture works.
+
+**Koch snowflake problem:** Training was noisy — physics loss oscillates wildly between 0.03 and 300+. The fractal boundary has 768 edges (level 4) with tiny inlets that the PINN undersamps. The eigenfunction concentrates in the center and doesn't resolve boundary features.
+
+**First fix attempt — multi-scale correction networks:** Train a base eigenfunction, then add correction networks focused on bump regions at each fractal level. Failed — corrections added noise instead of fixing the boundary. The correction networks were fighting the full residual field instead of just fixing local boundary errors. Residual actually got 0.3x worse.
+
+**What worked — adaptive collocation resampling:** After initial training, compute the residual |∇²u + λu| everywhere. Resample collocation points weighted by residual² — this concentrates new points where the error is highest (near fractal inlets). Retrain with these focused points. Repeat for 4 phases.
+
+**Result:** 2x residual reduction. The adaptive version found λ ≈ 23.9 vs single-scale λ ≈ 19.0. The residual heatmaps show less error concentration near the fractal boundary with adaptive sampling.
+
+The key insight: it's better to retrain one network with better data than to stack correction networks. The corrections create coupling problems (each correction changes the Laplacian of the total, which invalidates the previous corrections). Adaptive resampling is simpler and more robust.
+
+---
+
 ## Stage 2 — Multi-Asset Rainbow Option
 
 ### Crank-Nicolson NaN blowup (2-asset FDM)

@@ -149,6 +149,8 @@ Since the PDE F(u) = 0 is known exactly, the network's prediction can be plugged
 - [x] 1D PINN with Ansatz engineering (hard boundary enforcement)
 - [x] Pointwise error plot |u_pinn - u_exact| across full domain
 - [x] Comparison: soft BC vs hard BC error at boundary
+- [x] Laplace eigenfunctions on complex domains (Koch snowflake, star)
+- [x] Adaptive multi-scale resampling for fractal boundary resolution
 
 ### Stage 2 — To Build
 - [x] 2-asset Black-Scholes FDM solver (Python, validation baseline)
@@ -227,6 +229,20 @@ Hard BC loss reaches 10⁻⁶ by epoch 5000. Soft BC plateaus around 10⁻⁴. B
 **Ground truth — exact Fourier series solution:**
 
 ![Ground Truth](stage1/ground_truth.png)
+
+### Laplace Eigenfunctions on Complex Domains
+
+Extension: solving ∇²u = -λu with u=0 on the boundary, where the eigenvalue λ is unknown and learned as a free parameter. PINNs are mesh-free, so fractal and irregular boundaries are no harder than circles — no mesh generation needed.
+
+**Validation:** Unit circle first eigenvalue λ = 5.787 vs exact 5.783 (0.06% error).
+
+Then applied to domains where FEM mesh generation is painful or impossible:
+
+![Eigenfunctions](stage1/eigenfunction_results.png)
+
+**Adaptive multi-scale resampling** addresses the fractal boundary resolution problem: after initial training, compute the a posteriori residual |∇²u + λu| at each point, then resample collocation points weighted by residual — concentrating points where the solution is worst (near fractal inlets). 4 phases of adaptive resampling reduce mean residual **2x** compared to uniform sampling.
+
+![Multi-scale Koch](stage1/multiscale_koch.png)
 
 ---
 
