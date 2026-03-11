@@ -46,6 +46,16 @@ Extended Stage 1 to solve ∇²u = -λu on complex 2D domains (Koch snowflake, f
 
 The key insight: it's better to retrain one network with better data than to stack correction networks. The corrections create coupling problems (each correction changes the Laplacian of the total, which invalidates the previous corrections). Adaptive resampling is simpler and more robust.
 
+**Second fix attempt — curriculum training (level 2→3→4):** The hypothesis was that training on coarser Koch fractal levels first (fewer edges, smoother boundary) would give the network a good initialization before refining to level 4. Three changes: (1) curriculum on fractal level, (2) gradual point injection (replace 10% every 2000 epochs), (3) per-point loss normalization by nearest edge length.
+
+**Result:** Only 1.1x improvement over baseline — essentially no gain. The curriculum approach failed for two reasons:
+
+1. **Self-similarity kills transfer.** The Koch snowflake is self-similar: each level has the same fractal structure at a different scale. The eigenfunction on level 2 (48 edges) is genuinely different from level 4 (768 edges). The level-2 eigenvalue (λ ≈ 18.7) is far from the level-4 value (λ ≈ 20.6), so the "warm start" puts the network in a different basin, not a better one.
+
+2. **Point injection causes the spikes, not the fractal boundary.** The physics loss spikes to 1000-5000 every ~2000 epochs — exactly when the gradual injection replaces 10% of collocation points. Suddenly replacing training data mid-optimization creates a temporary distribution shift that the Adam optimizer needs several hundred steps to recover from. The spikes happen in both the curriculum and baseline (which also uses adaptive resampling).
+
+**Takeaway:** For fractal PINNs, adaptive resampling (2x improvement) is the practical tool. Curriculum on fractal level doesn't transfer because the eigenfunction structure changes at each level. The remaining oscillation is caused by collocation point replacement — this is an inherent limitation of adaptive resampling with a finite point budget.
+
 ---
 
 ## Stage 2 — Multi-Asset Rainbow Option
@@ -125,6 +135,8 @@ Initial scaling test used the same 64-hidden subnets that worked for 2 and 5 ass
 - 2-asset: 18.8281 vs MC 18.8423 → 0.08% (pass)
 
 The residual connection was the key insight. Without it, the 256-hidden nets still struggled because the initial random weights produced large random Z outputs that destabilized the SDE simulation in early training.
+
+**Correlation mismatch bug:** The 2-asset scaling test failed at 5.35% for two runs in a row, with and without residual connections. Both converged to Y0 ≈ 20.88 vs MC price 18.84. The real bug: the MC reference price (18.8423) was computed with ρ=0.5 between the two assets (matching `mc_rainbow.py`), but `deep_bsde_fix.py` used ρ=0.3 for all dimensions. Lower correlation → higher max(S1,S2) → higher option price. The BSDE was converging correctly for its inputs — just to a different problem than the reference. Fixed by using ρ=0.5 for the 2-asset case to match the MC setup.
 
 ---
 

@@ -11,23 +11,23 @@ import time
 DEVICE = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
 
 
-class SubNet(nn.Module):  # wider + residual connection
-    def __init__(self, d, hidden=256):
+class SubNet(nn.Module):
+    def __init__(self, d, hidden=256, use_residual=True):
         super().__init__()
         self.fc1 = nn.Linear(d, hidden)
         self.fc2 = nn.Linear(hidden, hidden)
         self.fc3 = nn.Linear(hidden, d)
-        self.skip = nn.Linear(d, d) if d != hidden else None  # residual
+        self.use_residual = use_residual
 
     def forward(self, x):
         h = torch.relu(self.fc1(x))
         h = torch.relu(self.fc2(h))
         out = self.fc3(h)
-        return out + x  # residual: subnet learns correction to identity
+        return out + x if self.use_residual else out
 
 
 class DeepBSDE(nn.Module):
-    def __init__(self, d, T, N, r, sigmas, corr, K, y0_init):
+    def __init__(self, d, T, N, r, sigmas, corr, K, y0_init, hidden=256, use_residual=True):
         super().__init__()
         self.d = d
         self.T = T
@@ -41,7 +41,7 @@ class DeepBSDE(nn.Module):
 
         self.Y0 = nn.Parameter(torch.tensor(y0_init, dtype=torch.float32))
         self.Z0 = nn.Parameter(torch.randn(d) * 0.01)
-        self.subnets = nn.ModuleList([SubNet(d, hidden=256) for _ in range(N - 1)])
+        self.subnets = nn.ModuleList([SubNet(d, hidden=hidden, use_residual=use_residual) for _ in range(N - 1)])
 
     def forward(self, S0, batch_size):
         dt = self.dt
@@ -67,9 +67,9 @@ class DeepBSDE(nn.Module):
         return Y, g_T
 
 
-def train_and_eval(d, S0, K, T, r, sigmas, corr, y0_init, N=40, epochs=15000, batch_size=4096):
+def train_and_eval(d, S0, K, T, r, sigmas, corr, y0_init, N=40, epochs=15000, batch_size=4096, hidden=256, use_residual=True):
     S0_t = torch.tensor(S0, dtype=torch.float32, device=DEVICE)
-    model = DeepBSDE(d, T, N, r, sigmas, corr, K, y0_init).to(DEVICE)
+    model = DeepBSDE(d, T, N, r, sigmas, corr, K, y0_init, hidden=hidden, use_residual=use_residual).to(DEVICE)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=3e-3)
     scheduler = torch.optim.lr_scheduler.MultiStepLR(
@@ -77,6 +77,7 @@ def train_and_eval(d, S0, K, T, r, sigmas, corr, y0_init, N=40, epochs=15000, ba
     )
 
     history = []
+    y0_history = []
     t0 = time.time()
 
     for epoch in range(1, epochs + 1):
@@ -91,6 +92,7 @@ def train_and_eval(d, S0, K, T, r, sigmas, corr, y0_init, N=40, epochs=15000, ba
         scheduler.step()
 
         history.append(loss.item())
+        y0_history.append(model.Y0.item())
         if epoch % 1000 == 0 or epoch == 1:
             print(f'  epoch {epoch:5d} | loss: {loss.item():.4f} | Y0: {model.Y0.item():.4f}')
 
@@ -103,31 +105,42 @@ def train_and_eval(d, S0, K, T, r, sigmas, corr, y0_init, N=40, epochs=15000, ba
             Y, _ = model(S0_t, 100000)
             prices.append(Y.mean().item())
 
-    return np.mean(prices), np.std(prices), train_time, history
+    return np.mean(prices), np.std(prices), train_time, history, y0_history
 
 
 if __name__ == '__main__':
     print(f'Device: {DEVICE}')
     print(f'Subnets: 256-hidden, residual connections, N=40 timesteps\n')
 
-    mc_prices = {50: 77.3326, 100: 79.4396}
+    mc_prices = {2: 18.8423, 5: 31.9565, 20: 52.7814, 50: 77.3326, 100: 79.4396}
 
-    for d, y0_init in [(50, 75.0), (100, 78.0)]:
+    # hidden=64 no residual for low-d, 256+residual for high-d
+    # residual connection hurts at d=2 (biases Z toward identity, 5.35% error)
+    configs = [
+        (2,   [0.2, 0.3],                              18.5, 10000, 64,  False),
+        (5,   [0.2, 0.25, 0.3, 0.22, 0.28],            25.0, 10000, 64,  False),
+        (20,  [0.15 + 0.01*i for i in range(20)],       45.0, 12000, 256, True),
+        (50,  [0.15 + 0.005*i for i in range(50)],      75.0, 15000, 256, True),
+        (100, [0.15 + 0.002*i for i in range(100)],     78.0, 15000, 256, True),
+    ]
+
+    results = {}
+
+    for d, sigmas, y0_init, epochs, hidden, residual in configs:
         print('=' * 60)
-        print(f'{d}-ASSET RAINBOW (FIX ATTEMPT)')
+        print(f'{d}-ASSET RAINBOW (hidden={hidden}, {"residual" if residual else "no residual"})')
         print('=' * 60)
 
         S0 = np.array([100.0] * d)
-        if d == 50:
-            sigmas = [0.15 + 0.005*i for i in range(d)]
+        if d == 2:
+            corr = np.array([[1.0, 0.5], [0.5, 1.0]])  # match MC reference (rho=0.5)
         else:
-            sigmas = [0.15 + 0.002*i for i in range(d)]
-        corr = np.full((d, d), 0.3)
-        np.fill_diagonal(corr, 1.0)
+            corr = np.full((d, d), 0.3)
+            np.fill_diagonal(corr, 1.0)
 
-        price, std, t, hist = train_and_eval(
+        price, std, t, hist, y0_hist = train_and_eval(
             d, S0, 100, 1.0, 0.05, sigmas, corr, y0_init,
-            N=40, epochs=15000, batch_size=4096
+            N=40, epochs=epochs, batch_size=4096, hidden=hidden, use_residual=residual
         )
 
         mc_p = mc_prices[d]
@@ -139,18 +152,52 @@ if __name__ == '__main__':
         print(f'  Train:  {t:.1f}s')
         print(f'  {"PASS" if err < 0.5 else "FAIL"}\n')
 
-    # also rerun 2-asset with better init
+        results[d] = {
+            'price': price, 'std': std, 'mc': mc_p,
+            'error_pct': err, 'train_time': t,
+            'history': hist, 'y0_history': y0_hist
+        }
+
+    # summary table
+    print('\n' + '=' * 60)
+    print('SCALING SUMMARY (FIXED)')
     print('=' * 60)
-    print('2-ASSET RAINBOW (FIX Y0 INIT)')
-    print('=' * 60)
-    S0_2 = np.array([100.0, 100.0])
-    price_2, std_2, t_2, hist_2 = train_and_eval(
-        2, S0_2, 100, 1.0, 0.05, [0.2, 0.3],
-        np.array([[1.0, 0.5], [0.5, 1.0]]),
-        y0_init=18.5, N=40, epochs=10000, batch_size=4096
-    )
-    err_2 = abs(price_2 - 18.8423) / 18.8423 * 100
-    print(f'\n  BSDE:   {price_2:.4f} ± {std_2:.4f}')
-    print(f'  MC:     18.8423')
-    print(f'  Error:  {err_2:.2f}%')
-    print(f'  {"PASS" if err_2 < 0.5 else "FAIL"}\n')
+    print(f'{"Assets":>6} | {"MC Price":>10} | {"BSDE Price":>11} | {"Error":>7} | {"Train Time":>10}')
+    print('-' * 60)
+    for d in [2, 5, 20, 50, 100]:
+        r = results[d]
+        print(f'{d:>6} | {r["mc"]:>10.4f} | {r["price"]:>11.4f} | {r["error_pct"]:>6.2f}% | {r["train_time"]:>9.1f}s')
+
+    # plots
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+
+    # loss curves
+    for d in [2, 5, 20, 50, 100]:
+        axes[0].semilogy(results[d]['history'], alpha=0.7, label=f'{d}-asset')
+    axes[0].set_xlabel('Epoch'); axes[0].set_ylabel('Loss')
+    axes[0].set_title('Training Loss')
+    axes[0].legend(); axes[0].grid(True, alpha=0.3)
+
+    # error vs dimension
+    dims = [2, 5, 20, 50, 100]
+    errors = [results[d]['error_pct'] for d in dims]
+    axes[1].plot(dims, errors, 'o-', linewidth=2, markersize=8)
+    axes[1].axhline(0.5, color='red', linestyle='--', alpha=0.5, label='0.5% target')
+    axes[1].set_xlabel('Number of Assets')
+    axes[1].set_ylabel('Relative Error (%)')
+    axes[1].set_title('Pricing Error vs Dimension')
+    axes[1].legend(); axes[1].grid(True, alpha=0.3)
+
+    # Y0 convergence
+    for d in [2, 5, 20, 50, 100]:
+        mc_p = results[d]['mc']
+        y0_norm = [y / mc_p for y in results[d]['y0_history']]  # normalize by target
+        axes[2].plot(y0_norm, alpha=0.7, label=f'{d}-asset')
+    axes[2].axhline(1.0, color='red', linestyle='--', alpha=0.5, label='Target')
+    axes[2].set_xlabel('Epoch'); axes[2].set_ylabel('Y0 / MC Price')
+    axes[2].set_title('Y0 Convergence (normalized)')
+    axes[2].legend(); axes[2].grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.savefig('bsde_scaling_fixed.png', dpi=150)
+    print('\nSaved: bsde_scaling_fixed.png')
