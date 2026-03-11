@@ -11,3 +11,4 @@ wandb/
 outputs/
 stage2/mc_rainbow
 *.npz
+viz/
